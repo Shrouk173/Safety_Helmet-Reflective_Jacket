@@ -15,7 +15,7 @@ from ultralytics import YOLO
 # 1. إعدادات الصفحة وهوية المنظومة (Page Configuration & CSS Theme)
 # ==============================================================================
 st.set_page_config(
-    page_title="SafeSight AI | PPE Compliance Monitor",
+    page_title="SafeSight AI | Industrial PPE Platform",
     page_icon="🦺",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -102,7 +102,7 @@ def load_detection_engine(model_name: str):
         return {"model": model, "type": "torchvision", "device": device, "has_weights": has_w}
 
 # ==============================================================================
-# 3. المنطق التشريحي الصارم وقواعد السلامة الصناعية (Strict Compliance Rules)
+# 3. المنطق التشريحي وقواعد السلامة الصناعية (Strict Compliance Rules)
 # ==============================================================================
 def verify_anatomical_bounds(gear_box, person_box, region="head") -> bool:
     gx_c = (gear_box[0] + gear_box[2]) / 2.0
@@ -114,7 +114,7 @@ def verify_anatomical_bounds(gear_box, person_box, region="head") -> bool:
         return False
 
     if region == "head":
-        return py1 <= gy_c <= (py1 + 0.40 * p_h)
+        return py1 <= gy_c <= (py1 + 0.38 * p_h)
     elif region == "torso":
         return (py1 + 0.20 * p_h) <= gy_c <= (py1 + 0.85 * p_h)
     return False
@@ -125,6 +125,17 @@ def extract_best_gear(gear_list, person_box, region: str):
         return "none", 0.0
     best_candidate = max(candidates, key=lambda x: x['conf'])
     return best_candidate['label'], best_candidate['conf']
+
+def draw_styled_tag(img, text, x, y, bg_color):
+    """رسم بطاقة تعريفية ملونة ومنسقة لمنع تداخل النصوص"""
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.48
+    thick = 1
+    (t_w, t_h), _ = cv2.getTextSize(text, font, scale, thick)
+    y1 = max(0, y - t_h - 8)
+    y2 = max(t_h + 8, y)
+    cv2.rectangle(img, (x, y1), (x + t_w + 10, y2), bg_color, -1)
+    cv2.putText(img, text, (x + 5, y2 - 4), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
 
 def evaluate_worker_compliance(img_bgr, persons, helmets, vests):
     annotated = img_bgr.copy()
@@ -141,9 +152,10 @@ def evaluate_worker_compliance(img_bgr, persons, helmets, vests):
         has_helmet = (h_label == "helmet")
         has_vest = (v_label == "vest")
 
-        # Fully Safe: خوذة + سترة معاً
-        # Critical: غياب الاثنين معاً
-        # Warning: نقص أحدهما
+        # قواعد التقييم المطلوبة بدقة:
+        # 1. Fully Safe (أخضر): لابس الخوذة والسترة الفسفورية معاً
+        # 2. Critical (أحمر): مش لابس الاتنين معاً
+        # 3. Warning (برتقالي): لابس واحدة ومش لابس التانية
         if has_helmet and has_vest:
             safe_cnt += 1
             box_color = (0, 200, 0)
@@ -153,7 +165,7 @@ def evaluate_worker_compliance(img_bgr, persons, helmets, vests):
             crit_cnt += 1
             box_color = (0, 0, 255)
             status_text = "Critical"
-            tag_label = f"Worker #{idx+1} [CRITICAL VIOLATION]"
+            tag_label = f"Worker #{idx+1} [CRITICAL]"
         else:
             warn_cnt += 1
             box_color = (0, 140, 255)
@@ -162,8 +174,7 @@ def evaluate_worker_compliance(img_bgr, persons, helmets, vests):
             tag_label = f"Worker #{idx+1} [WARN: {missing_cause}]"
 
         cv2.rectangle(annotated, (px1, py1), (px2, py2), box_color, 3)
-        cv2.putText(annotated, tag_label, (px1, max(20, py1 - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, box_color, 2, cv2.LINE_AA)
+        draw_styled_tag(annotated, tag_label, px1, py1, box_color)
 
         audit_data.append({
             "Worker ID": f"Worker #{idx+1}",
@@ -243,25 +254,25 @@ def run_inference_pipeline(img_bgr, model_package, p_conf, g_conf, v_strict_conf
     return ann_img, audit_table, len(person_list), safe_n, warn_n, crit_n, latency_ms
 
 # ==============================================================================
-# 4. بناء واجهة المستخدم (Streamlit Interface)
+# 4. واجهة المستخدم الرسومية (GUI Dashboard)
 # ==============================================================================
-st.title("🦺 SafeSight AI — Industrial PPE Compliance Platform")
-st.caption("Real-Time Automated Monitoring of Hardhats and High-Visibility Vests")
+st.title("🦺 SafeSight AI — PPE Compliance Monitor")
+st.caption("AI-Powered Real-Time Safety Equipment Monitoring System (YOLO11, YOLOv8 & RetinaNet)")
 
 with st.sidebar:
-    st.subheader("⚙️ Architecture & Sensitivity")
-    active_engine = st.selectbox("Active Architecture", list(MODEL_REGISTRY.keys()))
+    st.subheader("⚙️ Architecture & Calibration")
+    active_engine = st.selectbox("Active Model Backbone", list(MODEL_REGISTRY.keys()))
     
-    meta_stat = MODEL_REGISTRY[active_engine]
-    if meta_stat["type"] == "torchvision" and not meta_stat["file"]:
-        st.warning("⚠️ RetinaNet weights not found locally. Download from Google Drive link in models folder.")
-
     st.markdown("---")
-    st.markdown("**Calibrated Threshold Controls**")
-    p_slider = st.slider("Person Sensitivity", 0.20, 0.90, 0.50, 0.05)
-    g_slider = st.slider("Helmet / General Gear", 0.15, 0.85, 0.35, 0.05)
-    vest_slider = st.slider("Strict Reflective Vest Threshold", 0.30, 0.90, 0.55, 0.05,
-                            help="Set to 0.55+ to reject normal clothes/jackets lacking retro-reflective stripes.")
+    st.markdown("**Threshold Tuning**")
+    p_slider = st.slider("Person Sensitivity Threshold", 0.20, 0.90, 0.50, 0.05)
+    g_slider = st.slider("Hardhat / General Threshold", 0.15, 0.85, 0.35, 0.05)
+    vest_slider = st.slider(
+        "Strict Reflective Vest Threshold", 0.30, 0.95, 0.65, 0.05,
+        help="Calibrated to 0.65+ to strictly reject casual clothes, t-shirts, and dark jackets lacking high-vis reflective bands."
+    )
+    
+    st.info("💡 **Scientific Calibration:** Gear Threshold (0.35) matches the F1-Confidence peak (0.371), while Vest Threshold (0.65) prevents color bias false positives.")
 
 tabs = st.tabs([
     "🔍 Site Inspector", 
@@ -300,10 +311,10 @@ with tabs[0]:
             k2.markdown(f'<div class="metric-card"><div class="metric-title">Fully Safe</div><div class="metric-num color-safe">{s_num}</div></div>', unsafe_allow_html=True)
             k3.markdown(f'<div class="metric-card"><div class="metric-title">Warnings</div><div class="metric-num color-warn">{w_num}</div></div>', unsafe_allow_html=True)
             k4.markdown(f'<div class="metric-card"><div class="metric-title">Critical Violations</div><div class="metric-num color-crit">{c_num}</div></div>', unsafe_allow_html=True)
-            k5.markdown(f'<div class="metric-card"><div class="metric-title">Inference Speed</div><div class="metric-num color-info">{elapsed:.1f} ms</div></div>', unsafe_allow_html=True)
+            k5.markdown(f'<div class="metric-card"><div class="metric-title">Inference Latency</div><div class="metric-num color-info">{elapsed:.1f} ms</div></div>', unsafe_allow_html=True)
 
             if records:
-                st.markdown("### 📋 Individual Worker Audit Log")
+                st.markdown("### 📋 Detailed Worker Compliance Log")
                 st.dataframe(pd.DataFrame(records), use_container_width=True)
     else:
         with out_col:
@@ -375,7 +386,7 @@ with tabs[2]:
     st.dataframe(benchmark_df, use_container_width=True)
 
 # ----------------------------------------------------
-# TAB 4: الأدلة التشخيصية الشاملة لكافة المسارات
+# TAB 4: الأدلة التشخيصية الشاملة (مع المسارات الفعلية المكتشفة)
 # ----------------------------------------------------
 with tabs[3]:
     st.subheader("Empirical Training Validation Proofs")
@@ -385,7 +396,6 @@ with tabs[3]:
         ["YOLO11s (Attention Enhanced)", "YOLOv8n (Lightweight)", "RetinaNet (Baseline)"]
     )
 
-    # تحديد المجلد المستهدف بناءً على المسارات الفعلية المكتشفة
     if "11s" in proof_model:
         target_subfolder = "evaluation_output"
     elif "v8n" in proof_model:
@@ -393,21 +403,23 @@ with tabs[3]:
     else:
         target_subfolder = "evaluation_retinanet_output"
 
-    POSSIBLE_DIRS = [
+    # المسارات الشاملة المعتمدة على هيكل مجلدات المشروع الفعلية
+    SEARCH_DIRS = [
         os.path.join(BASE_DIR, "SafeSight-Workspace", "frontend", "public", target_subfolder, "test_metrics"),
         os.path.join(BASE_DIR, "frontend", "public", target_subfolder, "test_metrics"),
         os.path.join(BASE_DIR, "docs", target_subfolder, "test_metrics"),
-        os.path.join(BASE_DIR, "docs", "evaluation_output", "test_metrics"),
         os.path.join(BASE_DIR, target_subfolder, "test_metrics"),
+        os.path.join(BASE_DIR, "SafeSight-Workspace", "frontend", "public", "evaluation_output", "test_metrics"),
+        os.path.join(BASE_DIR, "docs", "evaluation_output", "test_metrics"),
         BASE_DIR
     ]
 
     def render_proof_image(filename_candidates, caption_desc):
-        for d in POSSIBLE_DIRS:
-            if not os.path.exists(d):
+        for loc in SEARCH_DIRS:
+            if not os.path.exists(loc):
                 continue
             for fname in filename_candidates:
-                full_p = os.path.join(d, fname)
+                full_p = os.path.join(loc, fname)
                 if os.path.exists(full_p):
                     st.image(full_p, use_container_width=True)
                     st.caption(caption_desc)
@@ -444,7 +456,7 @@ with tabs[3]:
     with loss_c:
         st.markdown("#### Training Loss History")
         if not render_proof_image(
-            ["results.png", "results.jpg"],
+            ["results.png", "results.jpg", "results"],
             "Decay of training and validation loss curves over training epochs."
         ):
             st.info(f"Loss history plot not available for {proof_model}.")
