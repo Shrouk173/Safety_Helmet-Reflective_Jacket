@@ -37,7 +37,6 @@ Designed for automated visual auditing across construction sites, civil infrastr
 10. [Repository Structure](#-repository-structure)
 11. [Installation & Environment Setup](#-installation--environment-setup)
 12. [Pipeline Execution](#-pipeline-execution)
-13. [Streamlit Application](#-streamlit-application)
 14. [Model Weights](#-model-weights)
 15. [Engineering Team](#-engineering-team)
 16. [License & Acknowledgments](#-license--acknowledgments)
