@@ -1,6 +1,5 @@
 import os
 import time
-import zipfile
 import cv2
 import numpy as np
 import pandas as pd
@@ -41,17 +40,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. إدارة الأوزان والمسارات الذكية (Model Weight Resolution)
+# 2. إدارة الأوزان والمسارات المستقرة (Model Registry & Weights)
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
-os.makedirs(MODELS_DIR, exist_ok=True)
 
-def locate_model_file(filename: str) -> str:
+def locate_file(rel_path: str) -> str:
     candidates = [
-        os.path.join(MODELS_DIR, filename),
-        os.path.join(BASE_DIR, filename),
-        filename
+        os.path.join(BASE_DIR, rel_path),
+        os.path.join(BASE_DIR, "Safety_Helmet-Reflective_Jacket", rel_path),
+        os.path.join(MODELS_DIR, os.path.basename(rel_path)),
+        os.path.join(BASE_DIR, os.path.basename(rel_path))
     ]
     for c in candidates:
         if os.path.exists(c):
@@ -60,17 +59,17 @@ def locate_model_file(filename: str) -> str:
 
 MODEL_REGISTRY = {
     "YOLO11s (Attention Enhanced - Best Accuracy)": {
-        "file": locate_model_file("best.pt"),
+        "file": locate_file("models/best.pt"),
         "type": "ultralytics",
         "fallback": "yolov8n.pt"
     },
     "YOLOv8n (Lightweight Edge - Best FPS)": {
-        "file": locate_model_file("best8n.pt"),
+        "file": locate_file("models/best8n.pt"),
         "type": "ultralytics",
         "fallback": "yolov8n.pt"
     },
     "RetinaNet (ResNet-50 Baseline)": {
-        "file": locate_model_file("retinanet_ppe_best.pth"),
+        "file": locate_file("models/retinanet_ppe_best.pth"),
         "type": "torchvision",
         "fallback": None
     }
@@ -87,6 +86,7 @@ def load_detection_engine(model_name: str):
         return {"model": model, "type": "ultralytics", "device": device, "has_weights": bool(meta["file"])}
         
     elif meta["type"] == "torchvision":
+        # تصحيح عدد الكلاسات ليتوافق مع تدريب RetinaNet في ريزنت 50 (5 كلاسات + خلفية = 6)
         model = torchvision.models.detection.retinanet_resnet50_fpn(
             weights=None, 
             weights_backbone=None, 
@@ -102,7 +102,7 @@ def load_detection_engine(model_name: str):
         return {"model": model, "type": "torchvision", "device": device, "has_weights": has_w}
 
 # ==============================================================================
-# 3. المنطق التشريحي وقواعد السلامة الصناعية (Strict Compliance Rules)
+# 3. المنطق التشريحي وقواعد السلامة الصناعية الصارمة
 # ==============================================================================
 def verify_anatomical_bounds(gear_box, person_box, region="head") -> bool:
     gx_c = (gear_box[0] + gear_box[2]) / 2.0
@@ -127,15 +127,14 @@ def extract_best_gear(gear_list, person_box, region: str):
     return best_candidate['label'], best_candidate['conf']
 
 def draw_styled_tag(img, text, x, y, bg_color):
-    """رسم بطاقة تعريفية ملونة ومنسقة لمنع تداخل النصوص"""
     font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.48
-    thick = 1
+    scale = 0.50
+    thick = 2
     (t_w, t_h), _ = cv2.getTextSize(text, font, scale, thick)
-    y1 = max(0, y - t_h - 8)
-    y2 = max(t_h + 8, y)
+    y1 = max(0, y - t_h - 10)
+    y2 = max(t_h + 10, y)
     cv2.rectangle(img, (x, y1), (x + t_w + 10, y2), bg_color, -1)
-    cv2.putText(img, text, (x + 5, y2 - 4), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
+    cv2.putText(img, text, (x + 5, y2 - 5), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
 
 def evaluate_worker_compliance(img_bgr, persons, helmets, vests):
     annotated = img_bgr.copy()
@@ -152,10 +151,9 @@ def evaluate_worker_compliance(img_bgr, persons, helmets, vests):
         has_helmet = (h_label == "helmet")
         has_vest = (v_label == "vest")
 
-        # قواعد التقييم المطلوبة بدقة:
-        # 1. Fully Safe (أخضر): لابس الخوذة والسترة الفسفورية معاً
-        # 2. Critical (أحمر): مش لابس الاتنين معاً
-        # 3. Warning (برتقالي): لابس واحدة ومش لابس التانية
+        # 1. Fully Safe: لابس الخوذة والسترة الفسفورية معاً
+        # 2. Critical: مش لابس الاتنين معاً
+        # 3. Warning: لابس واحدة ومش لابس التانية
         if has_helmet and has_vest:
             safe_cnt += 1
             box_color = (0, 200, 0)
@@ -225,6 +223,7 @@ def run_inference_pipeline(img_bgr, model_package, p_conf, g_conf, v_strict_conf
         if not model_package["has_weights"]:
             return img_bgr, [], 0, 0, 0, 0, 0.0
 
+        # خريطة كلاسات RetinaNet الصحيحة والمفصولة تماماً
         retina_map = {1: 'helmet', 2: 'no_helmet', 3: 'no_vest', 4: 'person', 5: 'vest'}
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         tensor = F.to_tensor(img_rgb).unsqueeze(0).to(dev)
@@ -254,25 +253,25 @@ def run_inference_pipeline(img_bgr, model_package, p_conf, g_conf, v_strict_conf
     return ann_img, audit_table, len(person_list), safe_n, warn_n, crit_n, latency_ms
 
 # ==============================================================================
-# 4. واجهة المستخدم الرسومية (GUI Dashboard)
+# 4. بناء واجهة المستخدم
 # ==============================================================================
 st.title("🦺 SafeSight AI — PPE Compliance Monitor")
 st.caption("AI-Powered Real-Time Safety Equipment Monitoring System (YOLO11, YOLOv8 & RetinaNet)")
 
 with st.sidebar:
-    st.subheader("⚙️ Architecture & Calibration")
+    st.subheader("⚙️ Architecture & Sensitivity")
     active_engine = st.selectbox("Active Model Backbone", list(MODEL_REGISTRY.keys()))
     
     st.markdown("---")
-    st.markdown("**Threshold Tuning**")
-    p_slider = st.slider("Person Sensitivity Threshold", 0.20, 0.90, 0.50, 0.05)
-    g_slider = st.slider("Hardhat / General Threshold", 0.15, 0.85, 0.35, 0.05)
+    st.markdown("**Calibrated Threshold Controls**")
+    p_slider = st.slider("Person Confidence Threshold", 0.20, 0.90, 0.50, 0.05)
+    g_slider = st.slider("Safety Gear Threshold", 0.15, 0.85, 0.35, 0.05)
     vest_slider = st.slider(
         "Strict Reflective Vest Threshold", 0.30, 0.95, 0.65, 0.05,
         help="Calibrated to 0.65+ to strictly reject casual clothes, t-shirts, and dark jackets lacking high-vis reflective bands."
     )
     
-    st.info("💡 **Scientific Calibration:** Gear Threshold (0.35) matches the F1-Confidence peak (0.371), while Vest Threshold (0.65) prevents color bias false positives.")
+    st.info("💡 **Scientific Basis:** Gear Threshold (0.35) matches the F1-Confidence peak (0.371) to ensure high recall for small objects, while Vest Threshold (0.65) rejects casual clothes.")
 
 tabs = st.tabs([
     "🔍 Site Inspector", 
@@ -287,7 +286,7 @@ tabs = st.tabs([
 with tabs[0]:
     in_col, out_col = st.columns([1, 2])
     with in_col:
-        st.subheader("Inspection Input")
+        st.subheader("Input Stream")
         file_input = st.file_uploader("Upload Inspection Image", type=["jpg", "jpeg", "png"], key="main_input")
         execute_btn = st.button("Run Compliance Scan", type="primary", use_container_width=True)
 
@@ -311,10 +310,10 @@ with tabs[0]:
             k2.markdown(f'<div class="metric-card"><div class="metric-title">Fully Safe</div><div class="metric-num color-safe">{s_num}</div></div>', unsafe_allow_html=True)
             k3.markdown(f'<div class="metric-card"><div class="metric-title">Warnings</div><div class="metric-num color-warn">{w_num}</div></div>', unsafe_allow_html=True)
             k4.markdown(f'<div class="metric-card"><div class="metric-title">Critical Violations</div><div class="metric-num color-crit">{c_num}</div></div>', unsafe_allow_html=True)
-            k5.markdown(f'<div class="metric-card"><div class="metric-title">Inference Latency</div><div class="metric-num color-info">{elapsed:.1f} ms</div></div>', unsafe_allow_html=True)
+            k5.markdown(f'<div class="metric-card"><div class="metric-title">Inference Speed</div><div class="metric-num color-info">{elapsed:.1f} ms</div></div>', unsafe_allow_html=True)
 
             if records:
-                st.markdown("### 📋 Detailed Worker Compliance Log")
+                st.markdown("### 📋 Individual Worker Audit Log")
                 st.dataframe(pd.DataFrame(records), use_container_width=True)
     else:
         with out_col:
@@ -353,10 +352,10 @@ with tabs[1]:
             st.caption(f"Detected: {tot2} | Fully Safe: {safe2} | Critical Violations: {crit2}")
 
 # ----------------------------------------------------
-# TAB 3: المقاييس الحسابية والتعقيد (Benchmarks)
+# TAB 3: المقاييس النظرية والتعقيد الحسابي
 # ----------------------------------------------------
 with tabs[2]:
-    st.subheader("Theoretical & Runtime Complexity Trade-offs")
+    st.subheader("Theoretical Complexity & Edge Feasibility")
     benchmark_df = pd.DataFrame([
         {
             "Architecture": "YOLO11s (Attention Enhanced)", 
@@ -386,7 +385,7 @@ with tabs[2]:
     st.dataframe(benchmark_df, use_container_width=True)
 
 # ----------------------------------------------------
-# TAB 4: الأدلة التشخيصية الشاملة (مع المسارات الفعلية المكتشفة)
+# TAB 4: الأدلة التشخيصية المعزولة بدقة لكل نموذج
 # ----------------------------------------------------
 with tabs[3]:
     st.subheader("Empirical Training Validation Proofs")
@@ -396,67 +395,84 @@ with tabs[3]:
         ["YOLO11s (Attention Enhanced)", "YOLOv8n (Lightweight)", "RetinaNet (Baseline)"]
     )
 
+    # تحديد المجلد المباشر والصحيح بناءً على هيكلة ملفات المشروع
     if "11s" in proof_model:
-        target_subfolder = "evaluation_output"
+        subfolder_name = "evaluation_output"
     elif "v8n" in proof_model:
-        target_subfolder = "evaluation8n_output"
+        subfolder_name = "evaluation8n_output"
     else:
-        target_subfolder = "evaluation_retinanet_output"
+        subfolder_name = "evaluation_retinanet_output"
 
-    # المسارات الشاملة المعتمدة على هيكل مجلدات المشروع الفعلية
-    SEARCH_DIRS = [
-        os.path.join(BASE_DIR, "SafeSight-Workspace", "frontend", "public", target_subfolder, "test_metrics"),
-        os.path.join(BASE_DIR, "frontend", "public", target_subfolder, "test_metrics"),
-        os.path.join(BASE_DIR, "docs", target_subfolder, "test_metrics"),
-        os.path.join(BASE_DIR, target_subfolder, "test_metrics"),
-        os.path.join(BASE_DIR, "SafeSight-Workspace", "frontend", "public", "evaluation_output", "test_metrics"),
-        os.path.join(BASE_DIR, "docs", "evaluation_output", "test_metrics"),
-        BASE_DIR
-    ]
+    TARGET_METRICS_DIR = os.path.join(
+        BASE_DIR, "SafeSight-Workspace", "frontend", "public", subfolder_name, "test_metrics"
+    )
+    ALT_METRICS_DIR = os.path.join(
+        BASE_DIR, "frontend", "public", subfolder_name, "test_metrics"
+    )
 
-    def render_proof_image(filename_candidates, caption_desc):
-        for loc in SEARCH_DIRS:
-            if not os.path.exists(loc):
-                continue
-            for fname in filename_candidates:
-                full_p = os.path.join(loc, fname)
-                if os.path.exists(full_p):
-                    st.image(full_p, use_container_width=True)
-                    st.caption(caption_desc)
-                    return True
-        return False
+    def get_proof_path(filename: str) -> str:
+        for folder in [TARGET_METRICS_DIR, ALT_METRICS_DIR]:
+            p = os.path.join(folder, filename)
+            if os.path.exists(p):
+                return p
+        return ""
 
-    p1, p2 = st.columns(2)
-    with p1:
-        st.markdown("#### Normalized Confusion Matrix")
-        if not render_proof_image(
-            ["confusion_matrix_normalized.png", "confusion_matrix.png"],
-            "Class-wise classification precision and background confusion distribution."
-        ):
-            st.info(f"Matrix image not available for {proof_model}.")
+    if "RetinaNet" in proof_model:
+        # موديل RetinaNet يحتوي على رسم الخسارة results.png فقط
+        st.markdown("#### Training Loss & Validation History")
+        loss_path = get_proof_path("results.png")
+        if loss_path:
+            st.image(loss_path, use_container_width=True)
+            st.caption("Training loss decay and validation divergence curves for RetinaNet (ResNet-50).")
+        else:
+            st.info("Results plot for RetinaNet not found.")
+    else:
+        # نماذج YOLO (تحتوي على الرسوم البيانية الأربعة الكاملة)
+        p1, p2 = st.columns(2)
+        with p1:
+            st.markdown("#### Normalized Confusion Matrix")
+            m_path = get_proof_path("confusion_matrix_normalized.png")
+            if m_path:
+                st.image(m_path, use_container_width=True)
+                st.caption(f"Class-wise classification precision for {proof_model}.")
+            else:
+                st.info("Matrix image not available.")
 
-    with p2:
-        st.markdown("#### Precision-Recall (PR) Curve")
-        if not render_proof_image(
-            ["BoxPR_curve.png"],
-            "Area Under Curve (AUC) demonstrating mAP performance across all 5 classes."
-        ):
-            st.info(f"PR curve not available for {proof_model}.")
+        with p2:
+            st.markdown("#### Precision-Recall (PR) Curve")
+            pr_path = get_proof_path("BoxPR_curve.png")
+            if pr_path:
+                st.image(pr_path, use_container_width=True)
+                st.caption(f"Precision-Recall AUC curve for {proof_model}.")
+            else:
+                st.info("PR curve not available.")
 
-    st.markdown("---")
-    f1_c, loss_c = st.columns(2)
-    with f1_c:
-        st.markdown("#### F1-Confidence Optimization Curve")
-        if not render_proof_image(
-            ["BoxF1_curve.png"],
-            "Empirical mathematical validation for setting the default gear threshold to 0.35."
-        ):
-            st.info(f"F1 curve not available for {proof_model}.")
+        st.markdown("---")
+        f1_c, loss_c = st.columns(2)
+        with f1_c:
+            st.markdown("#### F1-Confidence Optimization Curve")
+            f1_path = get_proof_path("BoxF1_curve.png")
+            if f1_path:
+                st.image(f1_path, use_container_width=True)
+                st.caption(f"F1-Confidence tradeoff curve for {proof_model}.")
+            else:
+                st.info("F1 curve not available.")
 
-    with loss_c:
-        st.markdown("#### Training Loss History")
-        if not render_proof_image(
-            ["results.png", "results.jpg", "results"],
-            "Decay of training and validation loss curves over training epochs."
-        ):
-            st.info(f"Loss history plot not available for {proof_model}.")
+        with loss_c:
+            if "11s" in proof_model:
+                st.markdown("#### Training Loss History")
+                l_path = get_proof_path("results.png")
+                if l_path:
+                    st.image(l_path, use_container_width=True)
+                    st.caption("Decay of bounding box and classification losses over 50 epochs.")
+                else:
+                    st.info("Loss plot not available.")
+            else:
+                # YOLOv8n يحتوي على صور الـ val_batch بدلاً من results.png
+                st.markdown("#### Test Validation Batch Predictions")
+                val_path = get_proof_path("val_batch0_pred.jpg")
+                if val_path:
+                    st.image(val_path, use_container_width=True)
+                    st.caption("Ground-truth vs Model Predictions on Test Batch (YOLOv8n).")
+                else:
+                    st.info("Batch prediction image not available.")
